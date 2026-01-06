@@ -18,14 +18,22 @@
             }
         }
     ],
-    "rewrites": [
+    "routes": [
         {
-            "source": "/api/:path*",
-            "destination": "/api/index.js"
+            "src": "/api/(.*)",
+            "dest": "/api/index.js"
         },
         {
-            "source": "/:path*",
-            "destination": "/client/index.html"
+            "src": "/assets/(.*)",
+            "dest": "/client/assets/$1"
+        },
+        {
+            "src": "/(.+\\.[a-z]+)$",
+            "dest": "/client/$1"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/client/index.html"
         }
     ]
 }
