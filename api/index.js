@@ -47,8 +47,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
         }
 
         const user = await prisma.user.findUnique({
-            where: { email: email.toLowerCase() },
-            include: { department: true }
+            where: { email: email.toLowerCase() }
         });
 
         if (!user || !user.isActive) {
@@ -58,7 +57,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
             });
         }
 
-        const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+        const isValidPassword = await bcrypt.compare(password, user.password);
         if (!isValidPassword) {
             return res.status(401).json({
                 success: false,
@@ -102,7 +101,7 @@ app.post('/api/v1/auth/login', async (req, res) => {
                     name: user.name,
                     email: user.email,
                     role: user.role,
-                    department: user.department?.name || 'Unassigned',
+                    department: user.department || 'Unassigned',
                     avatar: user.avatar
                 },
                 ...tokens
@@ -132,8 +131,7 @@ app.get('/api/v1/auth/me', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
 
         const user = await prisma.user.findUnique({
-            where: { id: decoded.userId },
-            include: { department: true }
+            where: { id: decoded.userId }
         });
 
         if (!user) {
@@ -151,7 +149,7 @@ app.get('/api/v1/auth/me', async (req, res) => {
                     name: user.name,
                     email: user.email,
                     role: user.role,
-                    department: user.department?.name || 'Unassigned',
+                    department: user.department || 'Unassigned',
                     avatar: user.avatar
                 }
             }
