@@ -1,0 +1,241 @@
+// Prisma Schema for Milestone - Digital Standup Portal
+// Database: PostgreSQL (Neon)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// USER MODEL
+// =============================================================================
+model User {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  password   String   // Bcrypt hashed
+  name       String
+  role       Role     @default(EMPLOYEE)
+  department String
+  avatar     String?
+  isActive   Boolean  @default(true)
+  
+  // Relations
+  standups    Standup[]
+  blockers    Blocker[]
+  attendance  Attendance[]
+  
+  // Timestamps
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  
+  @@index([email])
+  @@index([role])
+  @@index([department])
+}
+
+enum Role {
+  EMPLOYEE
+  MANAGER
+  ADMIN
+}
+
+// =============================================================================
+// STANDUP MODEL
+// =============================================================================
+model Standup {
+  id     String   @id @default(cuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date   DateTime @default(now()) @db.Date
+  
+  // Morning Goal
+  goalSetTime DateTime?
+  todayGoal   String?   @db.Text
+  
+  // End of Day Submission
+  submissionTime       DateTime?
+  achievementTitle     String?   @db.VarChar(100)
+  achievementDesc      String?   @db.Text
+  goalStatus           GoalStatus?
+  completionPercentage Int?      // 0-100, for partial achievements
+  notAchievedReason    String?   @db.Text
+  
+  // Status & Review
+  status          StandupStatus @default(PENDING)
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  managerFeedback String?       @db.Text
+  
+  // Metadata
+  isLateSubmission Boolean  @default(false)
+  clickupTaskIds   String[] @default([])
+  aiInsights       Json?    // Gemini analysis results
+  
+  // Relations
+  uploadedFiles File[]
+  blockers      Blocker[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@index([status])
+  @@index([date])
+}
+
+enum StandupStatus {
+  PENDING         // No goal set yet
+  GOAL_SET        // Goal set, waiting for submission
+  SUBMITTED       // Achievement submitted, pending review
+  APPROVED        // Manager approved
+  NEEDS_ATTENTION // Flagged by manager or AI
+}
+
+enum GoalStatus {
+  ACHIEVED
+  PARTIALLY_ACHIEVED
+  NOT_ACHIEVED
+}
+
+// =============================================================================
+// BLOCKER MODEL
+// =============================================================================
+model Blocker {
+  id        String  @id @default(cuid())
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  standupId String?
+  standup   Standup? @relation(fields: [standupId], references: [id], onDelete: SetNull)
+  
+  // Blocker Details
+  title           String          @db.VarChar(100)
+  description     String          @db.Text
+  category        BlockerCategory
+  severity        BlockerSeverity
+  supportRequired String          // Team or person needed
+  
+  // Status & Resolution
+  status             BlockerStatus @default(OPEN)
+  escalatedTo        String?
+  escalationNotes    String?       @db.Text
+  escalationDeadline DateTime?
+  resolutionNotes    String?       @db.Text
+  resolvedAt         DateTime?
+  resolvedBy         String?
+  
+  // AI Analysis
+  aiAnalysis Json?
+  
+  // Relations
+  uploadedFiles File[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@index([userId, status])
+  @@index([status])
+  @@index([severity])
+  @@index([createdAt])
+}
+
+enum BlockerCategory {
+  TECHNICAL
+  RESOURCE
+  COMMUNICATION
+  EXTERNAL
+  OTHER
+}
+
+enum BlockerSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BlockerStatus {
+  OPEN
+  IN_PROGRESS
+  ESCALATED
+  RESOLVED
+}
+
+// =============================================================================
+// FILE MODEL
+// =============================================================================
+model File {
+  id           String   @id @default(cuid())
+  filename     String   // Stored filename (with UUID)
+  originalName String   // Original upload name
+  filepath     String   // Full path or S3 key
+  filesize     Int      // Bytes
+  mimetype     String
+  
+  // Relations (polymorphic - file belongs to standup OR blocker)
+  standupId String?
+  standup   Standup? @relation(fields: [standupId], references: [id], onDelete: Cascade)
+  blockerId String?
+  blocker   Blocker? @relation(fields: [blockerId], references: [id], onDelete: Cascade)
+  
+  // Timestamps
+  uploadedAt DateTime @default(now())
+  
+  @@index([standupId])
+  @@index([blockerId])
+}
+
+// =============================================================================
+// ATTENDANCE MODEL
+// =============================================================================
+model Attendance {
+  id          String           @id @default(cuid())
+  userId      String
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date        DateTime         @db.Date
+  loginTime   DateTime?
+  logoutTime  DateTime?
+  hoursWorked Float?
+  status      AttendanceStatus @default(ABSENT)
+  
+  @@unique([userId, date])
+  @@index([userId, date])
+  @@index([date])
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  LATE
+}
+
+// =============================================================================
+// NOTIFICATION LOG (For tracking Teams notifications)
+// =============================================================================
+model NotificationLog {
+  id        String           @id @default(cuid())
+  type      NotificationType
+  recipient String           // Webhook URL or user ID
+  payload   Json
+  status    String           // sent, failed
+  error     String?
+  createdAt DateTime         @default(now())
+  
+  @@index([type])
+  @@index([createdAt])
+}
+
+enum NotificationType {
+  BLOCKER_ALERT
+  SUBMISSION_NOTIFICATION
+  DAILY_REMINDER
+  WEEKLY_REPORT
+  APPROVAL_NOTIFICATION
+}
