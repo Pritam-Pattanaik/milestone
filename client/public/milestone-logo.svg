@@ -1,0 +1,29 @@
+<svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="logoGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+    <linearGradient id="flagGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="24" cy="24" r="22" fill="url(#logoGradient)"/>
+  
+  <!-- Flag pole -->
+  <rect x="16" y="10" width="2" height="28" rx="1" fill="white" opacity="0.9"/>
+  
+  <!-- Flag -->
+  <path d="M18 12 L32 18 L18 24 Z" fill="url(#flagGradient)"/>
+  
+  <!-- Milestone marker dots -->
+  <circle cx="17" cy="34" r="3" fill="white" opacity="0.9"/>
+  <circle cx="17" cy="34" r="1.5" fill="#6366f1"/>
+  
+  <!-- Accent line -->
+  <path d="M22 30 L34 30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+  <path d="M26 34 L34 34" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.4"/>
+</svg>
