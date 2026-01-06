@@ -123,20 +123,22 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 // =============================================================================
-// SERVER START
+// SERVER START (only in non-serverless environments)
 // =============================================================================
 
 const PORT = process.env.PORT || 5000;
 
-const startServer = async () => {
-    try {
-        // Initialize scheduled tasks (cron jobs)
-        if (process.env.NODE_ENV !== 'test') {
-            initScheduledTasks();
-        }
+// Only start server if not running as a Vercel serverless function
+if (process.env.VERCEL !== '1' && require.main === module) {
+    const startServer = async () => {
+        try {
+            // Initialize scheduled tasks (cron jobs)
+            if (process.env.NODE_ENV !== 'test') {
+                initScheduledTasks();
+            }
 
-        app.listen(PORT, () => {
-            console.log(`
+            app.listen(PORT, () => {
+                console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
 ║   🎯 MILESTONE API SERVER                                 ║
@@ -147,23 +149,26 @@ const startServer = async () => {
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
       `);
-        });
-    } catch (error) {
-        console.error('Failed to start server:', error);
+            });
+        } catch (error) {
+            console.error('Failed to start server:', error);
+            process.exit(1);
+        }
+    };
+
+    // Handle uncaught exceptions
+    process.on('uncaughtException', (error) => {
+        console.error('Uncaught Exception:', error);
         process.exit(1);
-    }
-};
+    });
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error);
-    process.exit(1);
-});
+    process.on('unhandledRejection', (reason, promise) => {
+        console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    });
 
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
+    startServer();
+}
 
-startServer();
+// Export for Vercel serverless and testing
+module.exports = app;
 
-module.exports = app; // For testing
