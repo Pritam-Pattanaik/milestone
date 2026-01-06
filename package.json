@@ -15,6 +15,7 @@
     "build:client": "cd client && npm run build",
     "build:server": "cd server && npm run build",
     "start": "cd server && npm start",
+    "vercel-build": "cd server && npx prisma generate && cd ../client && npm run build",
     "db:migrate": "cd server && npx prisma migrate dev",
     "db:generate": "cd server && npx prisma generate",
     "db:studio": "cd server && npx prisma studio",
@@ -23,8 +24,18 @@
     "test:server": "cd server && npm test",
     "test:client": "cd client && npm test"
   },
+  "dependencies": {
+    "@prisma/client": "^5.20.0",
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "helmet": "^8.0.0",
+    "dotenv": "^16.4.5",
+    "jsonwebtoken": "^9.0.2",
+    "bcryptjs": "^2.4.3"
+  },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "prisma": "^5.20.0"
   },
   "engines": {
     "node": ">=18.0.0"
