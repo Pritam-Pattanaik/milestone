@@ -43,7 +43,7 @@ export default function Login() {
         <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="card p-8"
+            className="card p-6 sm:p-8"
         >
             {/* Logo */}
             <div className="text-center mb-8">
