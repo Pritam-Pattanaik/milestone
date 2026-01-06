@@ -14,6 +14,20 @@ export default defineConfig({
     },
     build: {
         outDir: 'dist',
-        sourcemap: true
+        sourcemap: true,
+        rollupOptions: {
+            output: {
+                manualChunks: {
+                    // React core
+                    'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+                    // Charting library (largest dependency)
+                    'vendor-recharts': ['recharts'],
+                    // Animation library
+                    'vendor-framer': ['framer-motion'],
+                    // Data fetching & utilities
+                    'vendor-utils': ['@tanstack/react-query', 'axios', 'date-fns']
+                }
+            }
+        }
     }
 })
