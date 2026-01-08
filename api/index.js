@@ -203,6 +203,252 @@ app.post('/api/v1/auth/logout', (req, res) => {
     res.json({ success: true, message: 'Logged out successfully' });
 });
 
+// =============================================
+// AUTH MIDDLEWARE
+// =============================================
+const authenticate = async (req, res, next) => {
+    try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader?.startsWith('Bearer ')) {
+            return res.status(401).json({
+                success: false,
+                error: { code: 'UNAUTHORIZED', message: 'No token provided' }
+            });
+        }
+        const token = authHeader.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
+        const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                error: { code: 'UNAUTHORIZED', message: 'User not found' }
+            });
+        }
+        req.user = user;
+        next();
+    } catch (error) {
+        res.status(401).json({
+            success: false,
+            error: { code: 'UNAUTHORIZED', message: 'Invalid token' }
+        });
+    }
+};
+
+// =============================================
+// STANDUP ROUTES
+// =============================================
+
+// GET /api/v1/standup/today - Get all standups for today
+app.get('/api/v1/standup/today', authenticate, async (req, res) => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const standups = await prisma.standup.findMany({
+            where: {
+                userId: req.user.id,
+                date: today
+            },
+            include: {
+                uploadedFiles: true,
+                blockers: { where: { status: { not: 'RESOLVED' } } }
+            },
+            orderBy: { sequence: 'asc' }
+        });
+
+        res.json({ success: true, data: { standups } });
+    } catch (error) {
+        console.error('Get today standups error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// POST /api/v1/standup/create - Create a new standup
+app.post('/api/v1/standup/create', authenticate, async (req, res) => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Get next sequence number
+        const existingStandups = await prisma.standup.findMany({
+            where: { userId: req.user.id, date: today },
+            orderBy: { sequence: 'desc' },
+            take: 1
+        });
+
+        const nextSequence = existingStandups.length > 0
+            ? existingStandups[0].sequence + 1
+            : 1;
+
+        const standup = await prisma.standup.create({
+            data: {
+                userId: req.user.id,
+                date: today,
+                sequence: nextSequence,
+                status: 'PENDING'
+            },
+            include: { uploadedFiles: true, blockers: true }
+        });
+
+        res.status(201).json({
+            success: true,
+            message: `Standup #${nextSequence} created! Set your goal to get started.`,
+            data: { standup }
+        });
+    } catch (error) {
+        console.error('Create standup error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// POST /api/v1/standup/goal - Set goal for a standup
+app.post('/api/v1/standup/goal', authenticate, async (req, res) => {
+    try {
+        const { todayGoal, standupId, clickupTaskIds = [] } = req.body;
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        if (!todayGoal || todayGoal.length < 50) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'VALIDATION_ERROR', message: 'Goal must be at least 50 characters' }
+            });
+        }
+
+        let standup;
+
+        if (standupId) {
+            // Update existing standup
+            standup = await prisma.standup.findUnique({ where: { id: standupId } });
+            if (!standup || standup.userId !== req.user.id) {
+                return res.status(404).json({
+                    success: false,
+                    error: { code: 'NOT_FOUND', message: 'Standup not found' }
+                });
+            }
+            if (standup.status !== 'PENDING') {
+                return res.status(400).json({
+                    success: false,
+                    error: { code: 'GOAL_ALREADY_SET', message: 'Goal already set for this standup.' }
+                });
+            }
+            standup = await prisma.standup.update({
+                where: { id: standupId },
+                data: { todayGoal, goalSetTime: new Date(), clickupTaskIds, status: 'GOAL_SET' },
+                include: { user: { select: { id: true, name: true, email: true, department: true } } }
+            });
+        } else {
+            // Create new standup with goal
+            const existingStandups = await prisma.standup.findMany({
+                where: { userId: req.user.id, date: today },
+                orderBy: { sequence: 'desc' },
+                take: 1
+            });
+            const nextSequence = existingStandups.length > 0 ? existingStandups[0].sequence + 1 : 1;
+
+            standup = await prisma.standup.create({
+                data: {
+                    userId: req.user.id,
+                    date: today,
+                    sequence: nextSequence,
+                    todayGoal,
+                    goalSetTime: new Date(),
+                    clickupTaskIds,
+                    status: 'GOAL_SET'
+                },
+                include: { user: { select: { id: true, name: true, email: true, department: true } } }
+            });
+        }
+
+        res.status(201).json({
+            success: true,
+            message: `Goal set successfully for Standup #${standup.sequence}! 🎯`,
+            data: { standup }
+        });
+    } catch (error) {
+        console.error('Set goal error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// POST /api/v1/standup/submit - Submit achievement
+app.post('/api/v1/standup/submit', authenticate, async (req, res) => {
+    try {
+        const { standupId, achievementTitle, achievementDesc, goalStatus, completionPercentage, notAchievedReason } = req.body;
+
+        if (!standupId) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'VALIDATION_ERROR', message: 'Standup ID is required' }
+            });
+        }
+
+        let standup = await prisma.standup.findUnique({ where: { id: standupId } });
+
+        if (!standup || standup.userId !== req.user.id) {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'NOT_FOUND', message: 'Standup not found' }
+            });
+        }
+
+        if (standup.status === 'PENDING') {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'NO_GOAL_SET', message: 'Please set a goal before submitting.' }
+            });
+        }
+
+        if (['SUBMITTED', 'APPROVED'].includes(standup.status)) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'ALREADY_SUBMITTED', message: 'This standup has already been submitted.' }
+            });
+        }
+
+        const isLateSubmission = new Date().getHours() >= 19;
+
+        standup = await prisma.standup.update({
+            where: { id: standupId },
+            data: {
+                achievementTitle,
+                achievementDesc,
+                goalStatus,
+                completionPercentage: completionPercentage || (goalStatus === 'ACHIEVED' ? 100 : null),
+                notAchievedReason,
+                submissionTime: new Date(),
+                status: 'SUBMITTED',
+                isLateSubmission
+            },
+            include: {
+                user: { select: { id: true, name: true, email: true, department: true } },
+                uploadedFiles: true
+            }
+        });
+
+        res.json({
+            success: true,
+            message: `Standup #${standup.sequence} submitted! Great work! 🎉`,
+            data: { standup }
+        });
+    } catch (error) {
+        console.error('Submit error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
 // Catch-all for unimplemented routes
 app.all('/api/*', (req, res) => {
     res.status(404).json({
