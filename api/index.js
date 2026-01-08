@@ -587,6 +587,270 @@ app.post('/api/v1/ai/suggest-goals', authenticate, async (req, res) => {
     }
 });
 
+// =============================================
+// USER MANAGEMENT ROUTES
+// =============================================
+
+// GET /api/v1/users - Get all users (admin/manager only)
+app.get('/api/v1/users', authenticate, async (req, res) => {
+    try {
+        if (!['ADMIN', 'MANAGER'].includes(req.user.role)) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'FORBIDDEN', message: 'Access denied' }
+            });
+        }
+
+        const { role, department, isActive, limit = 50, offset = 0 } = req.query;
+        const where = {};
+        if (role) where.role = role;
+        if (department) where.department = department;
+        if (isActive !== undefined) where.isActive = isActive === 'true';
+
+        const [users, total] = await Promise.all([
+            prisma.user.findMany({
+                where,
+                select: {
+                    id: true, email: true, name: true, role: true,
+                    department: true, avatar: true, isActive: true,
+                    lastLoginAt: true, createdAt: true
+                },
+                orderBy: { name: 'asc' },
+                take: parseInt(limit),
+                skip: parseInt(offset)
+            }),
+            prisma.user.count({ where })
+        ]);
+
+        res.json({
+            success: true,
+            data: { users, pagination: { total, limit: parseInt(limit), offset: parseInt(offset) } }
+        });
+    } catch (error) {
+        console.error('Get users error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// GET /api/v1/users/:id - Get user by ID
+app.get('/api/v1/users/:id', authenticate, async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.params.id },
+            select: {
+                id: true, email: true, name: true, role: true,
+                department: true, avatar: true, isActive: true,
+                lastLoginAt: true, createdAt: true
+            }
+        });
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'NOT_FOUND', message: 'User not found' }
+            });
+        }
+
+        res.json({ success: true, data: { user } });
+    } catch (error) {
+        console.error('Get user error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// POST /api/v1/users - Create new user (admin/manager only)
+app.post('/api/v1/users', authenticate, async (req, res) => {
+    try {
+        if (!['ADMIN', 'MANAGER'].includes(req.user.role)) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'FORBIDDEN', message: 'Only admins and managers can create users' }
+            });
+        }
+
+        const { email, password, name, role = 'EMPLOYEE', department } = req.body;
+
+        // Validation
+        if (!email || !password || !name || !department) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'VALIDATION_ERROR', message: 'Email, password, name, and department are required' }
+            });
+        }
+
+        // Check if email exists
+        const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() } });
+        if (existing) {
+            return res.status(400).json({
+                success: false,
+                error: { code: 'EMAIL_EXISTS', message: 'Email already registered' }
+            });
+        }
+
+        // Managers can only create employees
+        if (req.user.role === 'MANAGER' && role !== 'EMPLOYEE') {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'FORBIDDEN', message: 'Managers can only create employee accounts' }
+            });
+        }
+
+        // Hash password
+        const hashedPassword = await bcrypt.hash(password, 12);
+
+        const user = await prisma.user.create({
+            data: {
+                email: email.toLowerCase(),
+                password: hashedPassword,
+                name,
+                role,
+                department
+            },
+            select: {
+                id: true, email: true, name: true, role: true,
+                department: true, isActive: true, createdAt: true
+            }
+        });
+
+        res.status(201).json({
+            success: true,
+            message: `User ${name} created successfully!`,
+            data: { user }
+        });
+    } catch (error) {
+        console.error('Create user error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// PUT /api/v1/users/:id - Update user (admin/manager only)
+app.put('/api/v1/users/:id', authenticate, async (req, res) => {
+    try {
+        if (!['ADMIN', 'MANAGER'].includes(req.user.role)) {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'FORBIDDEN', message: 'Access denied' }
+            });
+        }
+
+        const { name, role, department, isActive, password } = req.body;
+        const updateData = {};
+
+        if (name) updateData.name = name;
+        if (role) updateData.role = role;
+        if (department) updateData.department = department;
+        if (isActive !== undefined) updateData.isActive = isActive;
+        if (password) updateData.password = await bcrypt.hash(password, 12);
+
+        const user = await prisma.user.update({
+            where: { id: req.params.id },
+            data: updateData,
+            select: {
+                id: true, email: true, name: true, role: true,
+                department: true, isActive: true, createdAt: true
+            }
+        });
+
+        res.json({
+            success: true,
+            message: 'User updated successfully',
+            data: { user }
+        });
+    } catch (error) {
+        if (error.code === 'P2025') {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'NOT_FOUND', message: 'User not found' }
+            });
+        }
+        console.error('Update user error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// DELETE /api/v1/users/:id - Deactivate user (admin only)
+app.delete('/api/v1/users/:id', authenticate, async (req, res) => {
+    try {
+        if (req.user.role !== 'ADMIN') {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'FORBIDDEN', message: 'Only admins can delete users' }
+            });
+        }
+
+        // Soft delete - just deactivate
+        await prisma.user.update({
+            where: { id: req.params.id },
+            data: { isActive: false }
+        });
+
+        res.json({
+            success: true,
+            message: 'User deactivated successfully'
+        });
+    } catch (error) {
+        if (error.code === 'P2025') {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'NOT_FOUND', message: 'User not found' }
+            });
+        }
+        console.error('Delete user error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// POST /api/v1/users/:id/reactivate - Reactivate user (admin only)
+app.post('/api/v1/users/:id/reactivate', authenticate, async (req, res) => {
+    try {
+        if (req.user.role !== 'ADMIN') {
+            return res.status(403).json({
+                success: false,
+                error: { code: 'FORBIDDEN', message: 'Only admins can reactivate users' }
+            });
+        }
+
+        const user = await prisma.user.update({
+            where: { id: req.params.id },
+            data: { isActive: true },
+            select: { id: true, email: true, name: true, isActive: true }
+        });
+
+        res.json({
+            success: true,
+            message: 'User reactivated successfully',
+            data: { user }
+        });
+    } catch (error) {
+        if (error.code === 'P2025') {
+            return res.status(404).json({
+                success: false,
+                error: { code: 'NOT_FOUND', message: 'User not found' }
+            });
+        }
+        console.error('Reactivate user error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
 // Catch-all for unimplemented routes
 app.all('/api/*', (req, res) => {
     res.status(404).json({
