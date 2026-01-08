@@ -449,6 +449,87 @@ app.post('/api/v1/standup/submit', authenticate, async (req, res) => {
     }
 });
 
+// GET /api/v1/standup/history - Get standup history
+app.get('/api/v1/standup/history', authenticate, async (req, res) => {
+    try {
+        const { limit = 30, offset = 0, startDate, endDate } = req.query;
+
+        const where = { userId: req.user.id };
+        if (startDate || endDate) {
+            where.date = {};
+            if (startDate) where.date.gte = new Date(startDate);
+            if (endDate) where.date.lte = new Date(endDate);
+        }
+
+        const [standups, total] = await Promise.all([
+            prisma.standup.findMany({
+                where,
+                include: {
+                    user: { select: { id: true, name: true, department: true } },
+                    uploadedFiles: true,
+                    blockers: true
+                },
+                orderBy: { date: 'desc' },
+                take: parseInt(limit),
+                skip: parseInt(offset)
+            }),
+            prisma.standup.count({ where })
+        ]);
+
+        res.json({
+            success: true,
+            data: {
+                standups,
+                pagination: { total, limit: parseInt(limit), offset: parseInt(offset), hasMore: parseInt(offset) + standups.length < total }
+            }
+        });
+    } catch (error) {
+        console.error('Get history error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// GET /api/v1/blocker/my-blockers - Get user's blockers
+app.get('/api/v1/blocker/my-blockers', authenticate, async (req, res) => {
+    try {
+        const { limit = 20, offset = 0, status } = req.query;
+
+        const where = { reportedById: req.user.id };
+        if (status) where.status = status;
+
+        const [blockers, total] = await Promise.all([
+            prisma.blocker.findMany({
+                where,
+                include: {
+                    standup: { select: { id: true, date: true, sequence: true } },
+                    reportedBy: { select: { id: true, name: true, department: true } }
+                },
+                orderBy: { createdAt: 'desc' },
+                take: parseInt(limit),
+                skip: parseInt(offset)
+            }),
+            prisma.blocker.count({ where })
+        ]);
+
+        res.json({
+            success: true,
+            data: {
+                blockers,
+                pagination: { total, limit: parseInt(limit), offset: parseInt(offset), hasMore: parseInt(offset) + blockers.length < total }
+            }
+        });
+    } catch (error) {
+        console.error('Get blockers error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
 // Catch-all for unimplemented routes
 app.all('/api/*', (req, res) => {
     res.status(404).json({
