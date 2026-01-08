@@ -497,15 +497,15 @@ app.get('/api/v1/blocker/my-blockers', authenticate, async (req, res) => {
     try {
         const { limit = 20, offset = 0, status } = req.query;
 
-        const where = { reportedById: req.user.id };
-        if (status) where.status = status;
+        const where = { userId: req.user.id };
+        if (status && status !== 'all') where.status = status;
 
         const [blockers, total] = await Promise.all([
             prisma.blocker.findMany({
                 where,
                 include: {
                     standup: { select: { id: true, date: true, sequence: true } },
-                    reportedBy: { select: { id: true, name: true, department: true } }
+                    user: { select: { id: true, name: true, department: true } }
                 },
                 orderBy: { createdAt: 'desc' },
                 take: parseInt(limit),
@@ -523,6 +523,63 @@ app.get('/api/v1/blocker/my-blockers', authenticate, async (req, res) => {
         });
     } catch (error) {
         console.error('Get blockers error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// GET /api/v1/attendance/today - Get today's attendance
+app.get('/api/v1/attendance/today', authenticate, async (req, res) => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let attendance = await prisma.attendance.findUnique({
+            where: {
+                userId_date: { userId: req.user.id, date: today }
+            }
+        });
+
+        // Create if not exists
+        if (!attendance) {
+            attendance = await prisma.attendance.create({
+                data: {
+                    userId: req.user.id,
+                    date: today,
+                    loginTime: new Date(),
+                    status: 'PRESENT'
+                }
+            });
+        }
+
+        res.json({ success: true, data: { attendance } });
+    } catch (error) {
+        console.error('Get attendance error:', error);
+        res.status(500).json({
+            success: false,
+            error: { code: 'SERVER_ERROR', message: 'Internal server error' }
+        });
+    }
+});
+
+// POST /api/v1/ai/suggest-goals - Get AI goal suggestions (mock for now)
+app.post('/api/v1/ai/suggest-goals', authenticate, async (req, res) => {
+    try {
+        // Return mock suggestions for now (can integrate with Gemini later)
+        const suggestions = [
+            'Complete the pending code review for the authentication module and provide detailed feedback',
+            'Implement unit tests for the new API endpoints to ensure code quality and reliability',
+            'Document the recent feature changes and update the technical documentation accordingly'
+        ];
+
+        res.json({
+            success: true,
+            data: { suggestions }
+        });
+    } catch (error) {
+        console.error('AI suggest error:', error);
         res.status(500).json({
             success: false,
             error: { code: 'SERVER_ERROR', message: 'Internal server error' }
