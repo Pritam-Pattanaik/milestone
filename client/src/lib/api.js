@@ -74,6 +74,7 @@ export const authAPI = {
 
 export const standupAPI = {
     getToday: () => api.get('/standup/today'),
+    create: () => api.post('/standup/create'),
     setGoal: (data) => api.post('/standup/goal', data),
     submit: (data) => api.post('/standup/submit', data),
     getHistory: (params) => api.get('/standup/history', { params }),

@@ -19,7 +19,8 @@ router.post('/goal',
         body('todayGoal')
             .isLength({ min: 50 }).withMessage('Goal must be at least 50 characters')
             .isLength({ max: 2000 }).withMessage('Goal cannot exceed 2000 characters'),
-        body('clickupTaskIds').optional().isArray()
+        body('clickupTaskIds').optional().isArray(),
+        body('standupId').optional().isString() // Optional: update existing standup
     ],
     asyncHandler(async (req, res) => {
         const errors = validationResult(req);
@@ -34,62 +35,88 @@ router.post('/goal',
             });
         }
 
-        const { todayGoal, clickupTaskIds = [] } = req.body;
+        const { todayGoal, clickupTaskIds = [], standupId } = req.body;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        // Check if standup already exists for today
-        let standup = await prisma.standup.findUnique({
-            where: {
-                userId_date: {
+        let standup;
+
+        if (standupId) {
+            // Update existing standup
+            standup = await prisma.standup.findUnique({
+                where: { id: standupId }
+            });
+
+            if (!standup || standup.userId !== req.user.id) {
+                return res.status(404).json({
+                    success: false,
+                    error: {
+                        code: 'NOT_FOUND',
+                        message: 'Standup not found'
+                    }
+                });
+            }
+
+            if (standup.status !== 'PENDING') {
+                return res.status(400).json({
+                    success: false,
+                    error: {
+                        code: 'GOAL_ALREADY_SET',
+                        message: 'Goal already set for this standup.'
+                    }
+                });
+            }
+
+            standup = await prisma.standup.update({
+                where: { id: standupId },
+                data: {
+                    todayGoal,
+                    goalSetTime: new Date(),
+                    clickupTaskIds,
+                    status: 'GOAL_SET'
+                },
+                include: {
+                    user: {
+                        select: { id: true, name: true, email: true, department: true }
+                    }
+                }
+            });
+        } else {
+            // Create new standup with auto-incremented sequence
+            const existingStandups = await prisma.standup.findMany({
+                where: {
                     userId: req.user.id,
                     date: today
-                }
-            }
-        });
+                },
+                orderBy: { sequence: 'desc' },
+                take: 1
+            });
 
-        if (standup && standup.status !== 'PENDING') {
-            return res.status(400).json({
-                success: false,
-                error: {
-                    code: 'GOAL_ALREADY_SET',
-                    message: 'You have already set a goal for today.'
+            const nextSequence = existingStandups.length > 0
+                ? existingStandups[0].sequence + 1
+                : 1;
+
+            standup = await prisma.standup.create({
+                data: {
+                    userId: req.user.id,
+                    date: today,
+                    sequence: nextSequence,
+                    todayGoal,
+                    goalSetTime: new Date(),
+                    clickupTaskIds,
+                    status: 'GOAL_SET'
+                },
+                include: {
+                    user: {
+                        select: { id: true, name: true, email: true, department: true }
+                    }
                 }
             });
         }
 
-        // Create or update standup
-        standup = await prisma.standup.upsert({
-            where: {
-                userId_date: {
-                    userId: req.user.id,
-                    date: today
-                }
-            },
-            update: {
-                todayGoal,
-                goalSetTime: new Date(),
-                clickupTaskIds,
-                status: 'GOAL_SET'
-            },
-            create: {
-                userId: req.user.id,
-                date: today,
-                todayGoal,
-                goalSetTime: new Date(),
-                clickupTaskIds,
-                status: 'GOAL_SET'
-            },
-            include: {
-                user: {
-                    select: { id: true, name: true, email: true, department: true }
-                }
-            }
-        });
-
         res.status(201).json({
             success: true,
-            message: 'Goal set successfully! Have a productive day! 🎯',
+            message: `Goal set successfully for Standup #${standup.sequence}! Have a productive day! 🎯`,
             data: { standup }
         });
     })
@@ -102,6 +129,7 @@ router.post('/goal',
 router.post('/submit',
     authenticate,
     [
+        body('standupId').isString().withMessage('Standup ID is required'),
         body('achievementTitle')
             .isLength({ min: 1, max: 100 }).withMessage('Title is required (max 100 characters)'),
         body('achievementDesc')
@@ -131,6 +159,7 @@ router.post('/submit',
         }
 
         const {
+            standupId,
             achievementTitle,
             achievementDesc,
             goalStatus,
@@ -138,26 +167,28 @@ router.post('/submit',
             notAchievedReason
         } = req.body;
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        // Find today's standup
+        // Find the specific standup
         let standup = await prisma.standup.findUnique({
-            where: {
-                userId_date: {
-                    userId: req.user.id,
-                    date: today
-                }
-            }
+            where: { id: standupId }
         });
 
         // Check if can submit
-        if (!standup) {
+        if (!standup || standup.userId !== req.user.id) {
+            return res.status(404).json({
+                success: false,
+                error: {
+                    code: 'NOT_FOUND',
+                    message: 'Standup not found'
+                }
+            });
+        }
+
+        if (standup.status === 'PENDING') {
             return res.status(400).json({
                 success: false,
                 error: {
                     code: 'NO_GOAL_SET',
-                    message: 'Please set a goal for today before submitting your achievement.'
+                    message: 'Please set a goal before submitting your achievement.'
                 }
             });
         }
@@ -167,7 +198,7 @@ router.post('/submit',
                 success: false,
                 error: {
                     code: 'ALREADY_SUBMITTED',
-                    message: 'You have already submitted your achievement for today. Submissions cannot be edited.'
+                    message: 'This standup has already been submitted.'
                 }
             });
         }
@@ -228,7 +259,7 @@ router.post('/submit',
 
 /**
  * GET /api/v1/standup/today
- * Get today's standup for current user
+ * Get all standups for today for current user
  */
 router.get('/today',
     authenticate,
@@ -236,38 +267,67 @@ router.get('/today',
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        let standup = await prisma.standup.findUnique({
+        const standups = await prisma.standup.findMany({
             where: {
-                userId_date: {
-                    userId: req.user.id,
-                    date: today
-                }
+                userId: req.user.id,
+                date: today
             },
             include: {
                 uploadedFiles: true,
                 blockers: {
                     where: { status: { not: 'RESOLVED' } }
                 }
-            }
+            },
+            orderBy: { sequence: 'asc' }
         });
-
-        // Create empty standup if none exists
-        if (!standup) {
-            standup = await prisma.standup.create({
-                data: {
-                    userId: req.user.id,
-                    date: today,
-                    status: 'PENDING'
-                },
-                include: {
-                    uploadedFiles: true,
-                    blockers: true
-                }
-            });
-        }
 
         res.json({
             success: true,
+            data: { standups }
+        });
+    })
+);
+
+/**
+ * POST /api/v1/standup/create
+ * Create a new standup for today (allows multiple per day)
+ */
+router.post('/create',
+    authenticate,
+    asyncHandler(async (req, res) => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // Get next sequence number
+        const existingStandups = await prisma.standup.findMany({
+            where: {
+                userId: req.user.id,
+                date: today
+            },
+            orderBy: { sequence: 'desc' },
+            take: 1
+        });
+
+        const nextSequence = existingStandups.length > 0
+            ? existingStandups[0].sequence + 1
+            : 1;
+
+        const standup = await prisma.standup.create({
+            data: {
+                userId: req.user.id,
+                date: today,
+                sequence: nextSequence,
+                status: 'PENDING'
+            },
+            include: {
+                uploadedFiles: true,
+                blockers: true
+            }
+        });
+
+        res.status(201).json({
+            success: true,
+            message: `Standup #${nextSequence} created! Set your goal to get started.`,
             data: { standup }
         });
     })

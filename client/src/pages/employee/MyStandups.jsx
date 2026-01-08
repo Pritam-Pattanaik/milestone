@@ -15,20 +15,25 @@ import {
     Upload,
     Trash2,
     AlertCircle,
-    FileText
+    FileText,
+    Plus
 } from 'lucide-react'
 import { format } from 'date-fns'
 
 export default function MyStandups() {
     const [files, setFiles] = useState([])
     const [showAiSuggestions, setShowAiSuggestions] = useState(false)
+    const [selectedIndex, setSelectedIndex] = useState(0)
     const queryClient = useQueryClient()
 
-    // Fetch today's standup
-    const { data: standup, isLoading } = useQuery({
-        queryKey: ['today-standup'],
-        queryFn: () => standupAPI.getToday().then(res => res.data.data.standup)
+    // Fetch today's standups (array)
+    const { data: standups = [], isLoading } = useQuery({
+        queryKey: ['today-standups'],
+        queryFn: () => standupAPI.getToday().then(res => res.data.data.standups)
     })
+
+    // Currently selected standup
+    const standup = standups[selectedIndex] || null
 
     // Goal form
     const goalForm = useForm({
@@ -48,12 +53,27 @@ export default function MyStandups() {
 
     const goalStatus = submitForm.watch('goalStatus')
 
+    // Create new standup mutation
+    const createStandup = useMutation({
+        mutationFn: () => standupAPI.create(),
+        onSuccess: (response) => {
+            toast.success(response.data.message || 'New standup created!')
+            queryClient.invalidateQueries(['today-standups'])
+            // Select the new standup
+            setSelectedIndex(standups.length)
+            goalForm.reset()
+        },
+        onError: (error) => {
+            toast.error(error.response?.data?.error?.message || 'Failed to create standup')
+        }
+    })
+
     // Set goal mutation
     const setGoal = useMutation({
-        mutationFn: (data) => standupAPI.setGoal(data),
+        mutationFn: (data) => standupAPI.setGoal({ ...data, standupId: standup?.id }),
         onSuccess: () => {
-            toast.success('🎯 Goal set! Have a productive day!')
-            queryClient.invalidateQueries(['today-standup'])
+            toast.success(`🎯 Goal set for Standup #${standup?.sequence || 1}!`)
+            queryClient.invalidateQueries(['today-standups'])
         },
         onError: (error) => {
             toast.error(error.response?.data?.error?.message || 'Failed to set goal')
@@ -63,7 +83,7 @@ export default function MyStandups() {
     // Submit achievement mutation
     const submitAchievement = useMutation({
         mutationFn: async (data) => {
-            const response = await standupAPI.submit(data)
+            const response = await standupAPI.submit({ ...data, standupId: standup?.id })
             const standupId = response.data.data.standup.id
 
             // Upload files if any
@@ -74,8 +94,8 @@ export default function MyStandups() {
             return response.data
         },
         onSuccess: () => {
-            toast.success('🎉 Achievement submitted! Great work today!')
-            queryClient.invalidateQueries(['today-standup'])
+            toast.success(`🎉 Standup #${standup?.sequence || 1} submitted! Great work!`)
+            queryClient.invalidateQueries(['today-standups'])
             setFiles([])
         },
         onError: (error) => {
@@ -105,7 +125,6 @@ export default function MyStandups() {
     }
 
     const onSubmitAchievement = (data) => {
-        // Confirmation dialog
         if (!window.confirm('⚠️ Are you sure? Submissions cannot be edited after submit.')) {
             return
         }
@@ -124,7 +143,7 @@ export default function MyStandups() {
         )
     }
 
-    // Determine current state
+    // Determine current state for selected standup
     const isGoalSet = standup?.status !== 'PENDING' && standup?.todayGoal
     const isSubmitted = ['SUBMITTED', 'APPROVED', 'NEEDS_ATTENTION'].includes(standup?.status)
 
@@ -133,116 +152,173 @@ export default function MyStandups() {
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
-                    <h1 className="text-2xl font-heading font-bold text-white">Today's Standup</h1>
+                    <h1 className="text-2xl font-heading font-bold text-white">Today's Standups</h1>
                     <p className="text-slate-400">{format(new Date(), 'EEEE, MMMM d, yyyy')}</p>
                 </div>
-                <div className={`badge ${isSubmitted ? 'badge-success' :
-                        isGoalSet ? 'badge-warning' :
-                            'badge-neutral'
-                    }`}>
-                    {isSubmitted ? 'Submitted' : isGoalSet ? 'Goal Set' : 'Not Started'}
-                </div>
+                <button
+                    onClick={() => createStandup.mutate()}
+                    disabled={createStandup.isPending}
+                    className="btn-primary"
+                >
+                    {createStandup.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                        <Plus className="w-4 h-4" />
+                    )}
+                    Add Standup
+                </button>
             </div>
 
-            {/* Goal Section */}
-            <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="card p-6"
-            >
-                <div className="flex items-center gap-3 mb-4">
-                    <div className={`p-2 rounded-xl ${isGoalSet ? 'bg-success-500/20' : 'bg-primary-500/20'}`}>
-                        <Target className={`w-5 h-5 ${isGoalSet ? 'text-success-400' : 'text-primary-400'}`} />
+            {/* Standup Selector Tabs */}
+            {standups.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                    {standups.map((s, index) => (
+                        <button
+                            key={s.id}
+                            onClick={() => setSelectedIndex(index)}
+                            className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${selectedIndex === index
+                                ? 'bg-primary-500 text-white'
+                                : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                }`}
+                        >
+                            Standup #{s.sequence}
+                            <span className={`ml-2 text-xs ${['SUBMITTED', 'APPROVED'].includes(s.status) ? 'text-success-400' :
+                                s.status === 'GOAL_SET' ? 'text-warning-400' : 'text-slate-500'
+                                }`}>
+                                {s.status === 'SUBMITTED' || s.status === 'APPROVED' ? '✓' :
+                                    s.status === 'GOAL_SET' ? '◐' : '○'}
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* No standups message */}
+            {standups.length === 0 && (
+                <div className="card p-8 text-center">
+                    <div className="w-16 h-16 bg-primary-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Target className="w-8 h-8 text-primary-400" />
                     </div>
-                    <div>
-                        <h2 className="text-lg font-semibold text-white">Today's Goal</h2>
-                        <p className="text-sm text-slate-400">What will you achieve today?</p>
+                    <h2 className="text-lg font-semibold text-white mb-2">No Standups Yet</h2>
+                    <p className="text-slate-400 mb-4">Click "Add Standup" to create your first standup for today.</p>
+                </div>
+            )}
+
+            {/* Selected Standup Badge */}
+            {standup && (
+                <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-400">
+                        Viewing: Standup #{standup.sequence}
+                    </span>
+                    <div className={`badge ${isSubmitted ? 'badge-success' :
+                        isGoalSet ? 'badge-warning' : 'badge-neutral'
+                        }`}>
+                        {isSubmitted ? 'Submitted' : isGoalSet ? 'Goal Set' : 'Not Started'}
                     </div>
                 </div>
+            )}
 
-                {isGoalSet ? (
-                    // Display set goal
-                    <div className="p-4 bg-slate-800/50 rounded-xl">
-                        <div className="flex items-center gap-2 text-sm text-slate-400 mb-2">
-                            <Clock className="w-4 h-4" />
-                            Set at {standup.goalSetTime ? format(new Date(standup.goalSetTime), 'h:mm a') : 'N/A'}
+            {/* Goal Section - only show when standup is selected */}
+            {standup && (
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="card p-6"
+                >
+                    <div className="flex items-center gap-3 mb-4">
+                        <div className={`p-2 rounded-xl ${isGoalSet ? 'bg-success-500/20' : 'bg-primary-500/20'}`}>
+                            <Target className={`w-5 h-5 ${isGoalSet ? 'text-success-400' : 'text-primary-400'}`} />
                         </div>
-                        <p className="text-slate-200">{standup.todayGoal}</p>
-                    </div>
-                ) : (
-                    // Goal form
-                    <form onSubmit={goalForm.handleSubmit(onSubmitGoal)} className="space-y-4">
-                        {/* AI Suggestions button */}
-                        <button
-                            type="button"
-                            onClick={handleGetSuggestions}
-                            className="btn-ghost w-full justify-center"
-                            disabled={aiLoading}
-                        >
-                            {aiLoading ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                                <Sparkles className="w-4 h-4 text-primary-400" />
-                            )}
-                            Get AI Suggestions
-                        </button>
-
-                        {/* AI Suggestions panel */}
-                        {showAiSuggestions && aiSuggestions && (
-                            <div className="p-4 bg-primary-500/10 rounded-xl border border-primary-500/30 space-y-2">
-                                <p className="text-sm text-primary-400 font-medium mb-2">✨ AI-Powered Suggestions:</p>
-                                {aiSuggestions.map((suggestion, i) => (
-                                    <button
-                                        key={i}
-                                        type="button"
-                                        onClick={() => useSuggestion(suggestion)}
-                                        className="w-full text-left p-3 bg-slate-800/50 rounded-lg text-sm text-slate-300 hover:bg-slate-700/50 transition-colors"
-                                    >
-                                        {suggestion}
-                                    </button>
-                                ))}
-                            </div>
-                        )}
-
                         <div>
-                            <textarea
-                                {...goalForm.register('todayGoal', {
-                                    required: 'Goal is required',
-                                    minLength: { value: 50, message: 'Goal must be at least 50 characters' }
-                                })}
-                                className={`input min-h-[120px] ${goalForm.formState.errors.todayGoal ? 'input-error' : ''}`}
-                                placeholder="Describe your goal for today in detail. Be specific about what you want to accomplish..."
-                            />
-                            <div className="flex items-center justify-between mt-1">
-                                {goalForm.formState.errors.todayGoal && (
-                                    <p className="text-sm text-danger-400">{goalForm.formState.errors.todayGoal.message}</p>
-                                )}
-                                <span className="text-xs text-slate-500 ml-auto">
-                                    {goalForm.watch('todayGoal')?.length || 0}/50 min characters
-                                </span>
-                            </div>
+                            <h2 className="text-lg font-semibold text-white">Goal for Standup #{standup.sequence}</h2>
+                            <p className="text-sm text-slate-400">What will you achieve?</p>
                         </div>
+                    </div>
 
-                        <button
-                            type="submit"
-                            disabled={setGoal.isPending}
-                            className="btn-primary w-full"
-                        >
-                            {setGoal.isPending ? (
-                                <>
+                    {isGoalSet ? (
+                        // Display set goal
+                        <div className="p-4 bg-slate-800/50 rounded-xl">
+                            <div className="flex items-center gap-2 text-sm text-slate-400 mb-2">
+                                <Clock className="w-4 h-4" />
+                                Set at {standup.goalSetTime ? format(new Date(standup.goalSetTime), 'h:mm a') : 'N/A'}
+                            </div>
+                            <p className="text-slate-200">{standup.todayGoal}</p>
+                        </div>
+                    ) : (
+                        // Goal form
+                        <form onSubmit={goalForm.handleSubmit(onSubmitGoal)} className="space-y-4">
+                            {/* AI Suggestions button */}
+                            <button
+                                type="button"
+                                onClick={handleGetSuggestions}
+                                className="btn-ghost w-full justify-center"
+                                disabled={aiLoading}
+                            >
+                                {aiLoading ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />
-                                    Setting Goal...
-                                </>
-                            ) : (
-                                <>
-                                    <Target className="w-4 h-4" />
-                                    Set Today's Goal
-                                </>
+                                ) : (
+                                    <Sparkles className="w-4 h-4 text-primary-400" />
+                                )}
+                                Get AI Suggestions
+                            </button>
+
+                            {/* AI Suggestions panel */}
+                            {showAiSuggestions && aiSuggestions && (
+                                <div className="p-4 bg-primary-500/10 rounded-xl border border-primary-500/30 space-y-2">
+                                    <p className="text-sm text-primary-400 font-medium mb-2">✨ AI-Powered Suggestions:</p>
+                                    {aiSuggestions.map((suggestion, i) => (
+                                        <button
+                                            key={i}
+                                            type="button"
+                                            onClick={() => useSuggestion(suggestion)}
+                                            className="w-full text-left p-3 bg-slate-800/50 rounded-lg text-sm text-slate-300 hover:bg-slate-700/50 transition-colors"
+                                        >
+                                            {suggestion}
+                                        </button>
+                                    ))}
+                                </div>
                             )}
-                        </button>
-                    </form>
-                )}
-            </motion.div>
+
+                            <div>
+                                <textarea
+                                    {...goalForm.register('todayGoal', {
+                                        required: 'Goal is required',
+                                        minLength: { value: 50, message: 'Goal must be at least 50 characters' }
+                                    })}
+                                    className={`input min-h-[120px] ${goalForm.formState.errors.todayGoal ? 'input-error' : ''}`}
+                                    placeholder="Describe your goal for today in detail. Be specific about what you want to accomplish..."
+                                />
+                                <div className="flex items-center justify-between mt-1">
+                                    {goalForm.formState.errors.todayGoal && (
+                                        <p className="text-sm text-danger-400">{goalForm.formState.errors.todayGoal.message}</p>
+                                    )}
+                                    <span className="text-xs text-slate-500 ml-auto">
+                                        {goalForm.watch('todayGoal')?.length || 0}/50 min characters
+                                    </span>
+                                </div>
+                            </div>
+
+                            <button
+                                type="submit"
+                                disabled={setGoal.isPending}
+                                className="btn-primary w-full"
+                            >
+                                {setGoal.isPending ? (
+                                    <>
+                                        <Loader2 className="w-4 h-4 animate-spin" />
+                                        Setting Goal...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Target className="w-4 h-4" />
+                                        Set Today's Goal
+                                    </>
+                                )}
+                            </button>
+                        </form>
+                    )}
+                </motion.div>
+            )}
 
             {/* Submission Section */}
             {isGoalSet && (
@@ -269,8 +345,8 @@ export default function MyStandups() {
                                 <div className="flex items-center justify-between mb-2">
                                     <span className="font-medium text-white">{standup.achievementTitle}</span>
                                     <span className={`badge ${standup.goalStatus === 'ACHIEVED' ? 'badge-success' :
-                                            standup.goalStatus === 'PARTIALLY_ACHIEVED' ? 'badge-warning' :
-                                                'badge-danger'
+                                        standup.goalStatus === 'PARTIALLY_ACHIEVED' ? 'badge-warning' :
+                                            'badge-danger'
                                         }`}>
                                         {standup.goalStatus?.replace('_', ' ')}
                                     </span>

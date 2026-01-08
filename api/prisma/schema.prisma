@@ -52,6 +52,7 @@ model Standup {
   userId String
   user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   date   DateTime @default(now()) @db.Date
+  sequence Int    @default(1)  // Allows multiple standups per day (1, 2, 3...)
   
   // Morning Goal
   goalSetTime DateTime?
@@ -84,7 +85,7 @@ model Standup {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   
-  @@unique([userId, date])
+  @@unique([userId, date, sequence])
   @@index([userId, date])
   @@index([status])
   @@index([date])
